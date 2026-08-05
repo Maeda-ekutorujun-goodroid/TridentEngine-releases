@@ -26,7 +26,7 @@ TridentEngineの使い方を機能別にまとめています。
 | ページ | 内容 |
 |---|---|
 | [グラフィックス](graphics.md) | 3Dモデル、ライティング、マテリアル、Skybox、LOD |
-| [カスタムShader](shaders.md) | HLSLでマテリアル・2D・ポストエフェクトを拡張 |
+| [カスタムShader](shaders.md) | HLSLでマテリアル・2D・ポストエフェクトを拡張。宣言でInspectorに名前付きUI、テクスチャ追加、半透明・加算の指定 |
 | [物理と衝突判定](physics.md) | Rigidbody、Collider、Raycast、物理マテリアル |
 | [UIと2D機能](ui-2d.md) | UI Canvas、ウィジェット、Tilemap、日本語テキスト |
 | [Animation](animation.md) | スケルタルアニメーション、Animator Controller |

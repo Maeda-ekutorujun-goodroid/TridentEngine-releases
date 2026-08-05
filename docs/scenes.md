@@ -67,6 +67,68 @@ Succeeded、Failed、Cancelledを確認できます。UI ButtonによるScene移
 されます。読み込み直後は少しぼやけた状態から数フレームで鮮明になり、
 巨大なテクスチャを読んでもフレームが止まりません。
 
+## 追加読み込み（Additive）
+
+今のSceneを消さずに、別のSceneを重ねて読み込めます。常駐UI、ポーズ画面、
+ステージを複数ファイルに分割した構成に使います。
+
+```cpp
+auto& scenes = scene.Scenes();
+
+// 今のSceneへ足す（次フレームの先頭で実行）
+scenes.RequestLoadAdditive("scenes/hud.scene.json");
+
+// 非同期版（先読みとLoading画面の仕組みを共有）
+scenes.RequestLoadAdditiveAsync("scenes/stage-01-props.scene.json");
+
+// 足した分だけ破棄する
+scenes.RequestUnload("scenes/hud.scene.json");
+```
+
+即時に処理したい場合は`Scene`側のAPIを直接呼べます。返り値の
+`SceneHandle`は、そのまま`UnloadScene`へ渡せます。**Scriptの
+`Update`など更新中からは呼ばないでください**（GameObjectの配列を
+更新中に変更するため）。Scriptからは必ず`Request系`を使います。
+
+```cpp
+const Trident::SceneHandle hud =
+    scene.MergeFromFile("scenes/hud.scene.json");
+
+for (const auto& loaded : scene.AdditiveScenes())
+{
+    // loaded.handle / loaded.path / loaded.name / loaded.rootCount
+}
+
+scene.UnloadScene(hud);
+scene.UnloadAllAdditiveScenes();
+```
+
+エディターでは、Asset Browserでシーンを右クリックして
+「シーンを追加読み込み（Additive）」を選ぶと足せます。Hierarchyには
+`[追加] シーン名`のグループが出て、右クリックの「この追加シーンを破棄」で
+そのシーンのGameObjectだけを消せます。UI Buttonの「追加読み込み
+（Additive）で開く」をオンにすると、C++を書かずにポーズ画面を重ねられます。
+
+追加読み込みの決まりごと:
+
+- **GameObjectのIDは振り直されます** — 既存Sceneと衝突しないようにするためで、
+  ファイル内の親子関係はそのまま保たれます。
+- **環境設定は主Sceneのものが残ります** — 追加Scene側の空・霧・Bloom・
+  カラーグレーディング・物理・カリング設定は無視します。
+- **Main Cameraは主Sceneが優先されます** — 主SceneにMain Cameraが無いときだけ、
+  追加Scene側のカメラを採用します。
+- **保存には混ざりません** — シーンを保存しても、追加読み込みしたGameObjectは
+  書き出されません（元のファイルのままです）。
+- **切り替え読み込みで一緒に消えます** — `RequestLoad`での切り替えや、
+  エディターの停止（編集状態の復元）で追加Sceneは破棄されます。
+- **実行中に作ったGameObjectは主Sceneの所属になります** — 追加Sceneの
+  GameObjectの子として作った場合は、その階層ごと一緒に破棄されます。
+- 同じパスの二重読み込みは拒否され、理由が`LastError()`に入ります。
+
+`DontDestroyOnLoad`との使い分けは、**Sceneを跨いで残したい単体の
+GameObject**なら`DontDestroyOnLoad`、**まとめて足したり外したりしたい
+一式**なら追加読み込みです。
+
 ルートGameObjectは、Inspectorの「シーン切替後も維持」を有効にするか、
 C++から`DontDestroyOnLoad`を呼ぶと、子階層とコンポーネントの実体を保ったまま
 次のSceneへ移動します。

@@ -34,6 +34,13 @@ Unityに近い作成手順をエディターから利用できます。
 6. バックグラウンドで自動ビルド・Hot Reloadされ、成功するとそのGameObjectへ
    Scriptが自動でアタッチされます。
 
+**書いたコードを保存すると、少し待ってから自動でビルドされます**（Unityで
+スクリプトを保存したときと同じ感覚です）。`assets`内の`.cpp`／`.h`が対象で、
+保存が続いている間は待ち、静かになってから1回だけビルドします。ビルドが終わると
+Hot Reloadが差し替えるので、エディターの再起動は不要です。再生中は自動ビルド
+しません。オフにしたい場合は「ファイル」→「プロジェクト設定...」→「スクリプト」の
+「保存したらGame Moduleを自動ビルド」を外します。
+
 手動で追加する場合は、アセットの右クリックメニューから「Game Moduleをビルド」を選び、
 Inspectorの「コンポーネントを追加」→「Game Module (C++)」から型を選択できます。
 
@@ -97,6 +104,98 @@ Destroy(*enemyObject);
 
 `GetComponentInChildren`系は既定で非アクティブ階層をスキップし、
 引数に`true`を渡すと含めます。
+
+### インターフェースとデザインパターン
+
+`GetComponent<T>()`はコンポーネント型でしか引けませんが、
+`GetScript<T>()`は**自分で書いたスクリプトの型やインターフェース**で引けます。
+UnityでMonoBehaviourにインターフェースを実装して`GetComponent<IDamageable>()`と
+書くのと同じ使い方です。
+
+まずインターフェースを普通のC++として`assets`以下のヘッダに定義します。
+エンジン側に登録する必要はありません。
+
+```cpp
+// assets/scripts/IDamageable.h
+struct IDamageable
+{
+    virtual ~IDamageable() = default;
+    virtual void ApplyDamage(int amount) = 0;
+};
+```
+
+実装側は`Trident::Script`と一緒に継承します。継承の順番は自由で、
+`Trident::Script`が先頭でなくても構いません。
+
+```cpp
+// assets/scripts/Enemy.cpp
+class Enemy final
+    : public IDamageable
+    , public Trident::Script
+{
+public:
+    void ApplyDamage(const int amount) override
+    {
+        m_health -= amount;
+        if (m_health <= 0)
+        {
+            Destroy(Owner());
+        }
+    }
+
+private:
+    int m_health{ 100 };
+};
+
+TRIDENT_SCRIPT(Enemy);
+```
+
+呼ぶ側はインターフェースだけを知っていれば十分です。
+`Enemy`のヘッダをincludeする必要はありません。
+
+```cpp
+// 同じGameObject上から
+if (auto* target = GetScript<IDamageable>())
+{
+    target->ApplyDamage(25);
+}
+
+// 階層から（自分自身も含みます）
+auto* target = GetScriptInChildren<IDamageable>();
+
+// 任意のGameObjectから
+auto* boss = Find("ボス");
+auto* damageable = boss->GetScript<IDamageable>();
+```
+
+見つからなければ`nullptr`を返すので、`if`で受けてください。
+`GetScriptInChildren`は既定で非アクティブ階層をスキップし、
+引数に`true`を渡すと含めます。
+
+これでステートパターンのように、実装を差し替えても呼び出し側を
+変えなくてよい書き方ができます。
+
+```cpp
+// 状態ごとの振る舞いをインターフェースに切り出す
+struct IEnemyState
+{
+    virtual ~IEnemyState() = default;
+    virtual void Tick(float deltaTime) = 0;
+};
+
+// 巡回・追跡・待機を別スクリプトにして、同じGameObjectへ
+// アタッチしたものを差し替えるだけで挙動が変わります。
+void EnemyBrain::Update(const float deltaTime)
+{
+    if (auto* state = GetScript<IEnemyState>())
+    {
+        state->Tick(deltaTime);
+    }
+}
+```
+
+インターフェースを追加・変更したら、Game Moduleのビルドが必要です
+（`assets`以下の`.cpp`/`.h`を保存すると自動でビルドされます）。
 
 ### タイマーとコルーチン
 
@@ -200,7 +299,7 @@ Hot Reloadされます。プロジェクトDLLのDebug／Release構成は、起�
 ```
 
 サンプルの`samples/GameModule/SampleGameModule.cpp`には、従来どおり
-`Sample.FloatingAccent`と`CoreRush.Director`も登録されています。
+`Sample.FloatingAccent`も登録されています。
 
 エンジンはDLLを`.trident-hot-reload`へシャドウコピーして読み込むため、
 エディターを終了せずに`TridentGameModule`を再ビルドできます。更新は約0.5秒ごとに

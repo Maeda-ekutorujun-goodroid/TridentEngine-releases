@@ -56,7 +56,7 @@ cmake --build --preset windows-release
 ## 4. カメラ
 
 GameObject「Main Camera」を作成して **Camera** を追加し、
-positionを `0, 4, 10`、rotation.xを `-0.25` くらいにすると
+positionを `0, 4, 10`、回転のピッチ（EulerAnglesのx）を `-0.25` くらいにすると
 斜め上からの見下ろしになります。
 
 ## 5. C++スクリプトで動かす

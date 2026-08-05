@@ -99,12 +99,73 @@ if (!animator->IsPlaying())
 シート分割・クリップ・既定クリップはシーンJSONへ保存され、複製やPrefabにも
 引き継がれます。
 
+## 2Dライティング（Light2D）
+
+`Light2D`コンポーネントを追加したGameObjectは、Transformの位置を中心に
+半径・色・強度を持つ光源になります。ワールド空間の`Sprite Renderer`
+（`UI Rect Transform`を持たないもの）を加算式に照らします。
+
+```cpp
+auto& torchLight = torch.AddComponent<Trident::Light2DComponent>();
+torchLight.SetColor({ 1.0f, 0.7f, 0.3f });
+torchLight.SetIntensity(1.5f);
+torchLight.SetRadius(200.0f);
+```
+
+- **暗くはなりません。** 光源から遠いスプライトは通常どおりの明るさの
+  ままで、近いスプライトへ色と明るさが加算されます。画面全体を暗くする
+  「昼夜の陰影」のような用途ではなく、ランタン・ネオン・魔法陣のような
+  「光る」演出向けです。
+- 対象は独自Shaderを持たない`Sprite Renderer`のみです。UI、Tilemap、
+  Particle System、独自HLSLを設定済みのSpriteは対象外です（独自Shader側で
+  同様の効果が欲しい場合は[カスタムShaderガイド](shaders.md)を参照して
+  ください）。
+- 1つのスプライトに影響するのは最も近い2灯までです。
+- Radius・色・位置（画面ピクセル基準）はこのエンジンのワールド座標系
+  そのまま（1ワールド単位＝1ピクセル）を使うため、Sprite RendererのSize
+  と同じ感覚で数値を決められます。
+- **Source Rect（アトラス部分表示）と併用すると全体表示になります。**
+  内部的にはSV_Positionから作り直したUVでテクスチャをサンプルしており
+  （このSpriteBatchはカスタムPS切替時にCOLOR0／TEXCOORD0をそのまま
+  信頼できないための対策）、Source Rectの矩形情報までは復元していない
+  ためです。スプライトシートの1コマだけを照らしたい場合は現状非対応です。
+
+## Sprite Mask（表示範囲の切り抜き）
+
+`Sprite Mask`コンポーネントを追加したGameObjectは、Transformの位置を
+中心に矩形または円の範囲を持つマスクになります。`Sprite Renderer`の
+「Sprite Mask」欄で`マスクの内側だけ表示`／`マスクの外側だけ表示`を
+選ぶと、そのSpriteが最も近いマスクでクリップされます。フォグ・オブ・
+ウォーの視界、懐中電灯の明かり、ウィンドウ状の演出に使えます。
+
+```cpp
+auto& mask = maskObject.AddComponent<Trident::SpriteMaskComponent>();
+mask.SetShape(Trident::SpriteMaskShape::Circle);
+mask.SetSize({ 300.0f, 300.0f }); // 円は幅の値を直径として使います
+
+auto& fogSprite = fog.AddComponent<Trident::SpriteRendererComponent>();
+fogSprite.SetMaskInteraction(
+    Trident::SpriteMaskInteraction::VisibleOutsideMask);
+```
+
+- クリップは境界がくっきりした二値判定です（半透明フェードなし）。
+- マスク形状は矩形・円のみです。任意画像の透明部分を型として使う
+  Unity風のアルファマスクには対応していません。
+- 対象は独自Shaderを持たない`Sprite Renderer`のみで、1つのSpriteが
+  従うのは最も近いマスク1つだけです。Light2Dと同時に必要なSpriteでは
+  Sprite Maskが優先されます（バッチ切替で使えるカスタムShaderは
+  1つのため、同時使用はできません）。
+- Light2Dと同じくSource Rectの矩形情報は復元していないため、
+  アトラス使用時は全体表示になります。
+
 ## 2D TilemapとTile Palette
 
 GameObjectの「コンポーネントを追加」から`Tilemap`を追加できます。Tilemapは1枚の
 タイルシートを列数・行数で分割し、各グリッドセルにはタイル番号だけを保持します。
 負座標を含む任意の位置へ配置でき、セルサイズ、Atlas分割、全体色とアルファを設定できます。
-配置セルとタイルシート参照はScene／PrefabのJSONへ保存されます。
+配置セルとタイルシート参照はScene／PrefabのJSONへ保存されます。Inspectorの
+「描画順」（Sprite RendererのSortOrderと同じ尺度、数値が大きいほど手前）を
+使うと、背景／地形／前景のように複数のTilemapを重ねたときの表示順を制御できます。
 
 「タイルパレット」タブは他のEditorタブと同様に、タブをドラッグしてDock位置の変更、
 独立ウィンドウ化、サイズ変更ができます。使い方は次の通りです。
@@ -118,6 +179,37 @@ GameObjectの「コンポーネントを追加」から`Tilemap`を追加でき�
 Sceneタブにマウスがある間は`B`でペイント、`E`で消去へ切り替えられます。一筆分の
 連続編集が1回のUndo履歴になるため、`Ctrl+Z`でまとめて取り消せます。タイルシートの
 ファイル移動・改名・削除確認はAsset Browserの参照管理にも統合されています。
+
+### 当たり判定の自動生成
+
+InspectorのTilemapコンポーネントにある「コライダーを生成」ボタンを押すと、配置済みの
+セルをすべて衝突対象として、隣接セルをまとめた最小限の`BoxCollider2D`を子GameObject
+として自動生成します（貪欲な矩形マージ。タイル1枚ごとにColliderを置くより描画・判定
+コストが小さく済みます）。生成されたColliderはTilemapの子として`タイルコライダー（自動
+生成）`という名前で並び、通常のBox Collider 2Dと同じくSceneのJSONへ保存されます。
+セルを編集したら再度「コライダーを生成」を押してください（既存の生成済みColliderは
+置き換えられます）。現状は配置済みセル全体が衝突対象になるため、当たり判定の要らない
+背景・装飾タイルは衝突を持たせたいTilemapとは別のTilemap GameObjectへ分けてください。
+
+### 奥行きのあるスクロール（Parallax Layer）
+
+`Parallax Layer`コンポーネントを背景・前景のTilemapやSpriteへ追加すると、
+参照（既定はMain Camera）の移動量に倍率を掛けた分だけ自身を動かします。
+
+```cpp
+auto& parallax =
+    background.AddComponent<Trident::ParallaxLayerComponent>();
+parallax.SetFactor({ 0.3f, 0.3f }); // カメラの30%の速さで動く遠景
+```
+
+- 倍率1.0で参照と同じ速さ（奥行きなし）、0.5で半分の速さ（遠い背景）、
+  0で画面に固定（空のような最遠景）、1.0より大きいと参照より速く動きます
+  （近景）。X／Yを別々に設定できます。
+- 参照はInspectorの「参照」欄でGameObjectを直接指定することもできます
+  （未設定＝Main Camera追従が既定です）。
+- 初回更新時点の位置を原点として記録するため、Playを開始した瞬間から
+  参照が動いた分だけ追従します。参照を実行中に切り替えると、その時点の
+  位置を新しい原点として記録し直します。
 
 ## ゲーム内日本語テキスト
 

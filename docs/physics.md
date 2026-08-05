@@ -54,6 +54,8 @@ TRIDENT_SCRIPT(JumpBox);
 Inspectorの「コンポーネントを追加」から次を追加できます。
 
 - 2Dボックスコライダー
+- 2D円コライダー
+- 2D多角形コライダー（Polygon Collider 2D）
 - 3Dボックスコライダー
 - 3Dカプセルコライダー
 - 3Dスフィアコライダー
@@ -166,6 +168,13 @@ void OnCollisionExit(const Trident::CollisionEvent& event) override;
 
 2Dは軽量なワールドAABB、3DのNarrow PhaseはOBB／Capsule／Sphere判定です。
 Physics QueryはBox、Capsule、Sphereを対象にし、現在は高速な外接Bounds判定を使用します。
+
+Polygon Collider 2DはこのAABB簡略化の例外で、GameObjectの回転にそのまま追従する
+凸多角形として判定します（エッジ法線を軸としたSAT、接触面のクリッピングによる
+最大2点のマニフォールド）。Inspectorで頂点を直接ドラッグ編集でき、斜面や凹凸の
+ある足場などBoxでは表現しづらい形状に使えます。頂点は3個以上で、必ず凸多角形に
+なるようにしてください（凹形状は判定が破綻します）。巻き順（時計回り／反時計回り）
+はどちらでも構いません。組み合わせるBox Collider 2Dは引き続きAABBとして扱われます。
 
 `Joint`コンポーネントでは接続先GameObjectと双方のローカルアンカーを指定できます。
 

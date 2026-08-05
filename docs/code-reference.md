@@ -519,8 +519,23 @@ void OnCollisionEnter(
 struct Transform final
 {
     DirectX::XMFLOAT3 position{ 0.0f, 0.0f, 0.0f };
-    DirectX::XMFLOAT3 rotation{ 0.0f, 0.0f, 0.0f };  // ラジアン
+    // 回転の正本。単位クォータニオン（x, y, z, w）
+    DirectX::XMFLOAT4 rotationQuaternion{
+        0.0f, 0.0f, 0.0f, 1.0f };
     DirectX::XMFLOAT3 scale{ 1.0f, 1.0f, 1.0f };
+
+    // オイラー角（ラジアン。x=ピッチ, y=ヨー, z=ロール）
+    DirectX::XMFLOAT3 EulerAngles() const noexcept;
+    void SetEulerAngles(const DirectX::XMFLOAT3&) noexcept;
+    void SetEulerAngles(
+        float pitch, float yaw, float roll) noexcept;
+
+    // 回転を後から合成する
+    void Rotate(
+        const DirectX::XMFLOAT3& axis,
+        float radians) noexcept;
+    void RotateEuler(
+        const DirectX::XMFLOAT3& radians) noexcept;
 };
 
 Transform& GetTransform() noexcept;   // Scriptのショートカット
@@ -528,20 +543,45 @@ Transform& GetTransform() noexcept;   // Scriptのショートカット
 
 **概略**
 
-位置・回転・拡縮です。値を直接書き換えて動かします。
+位置・回転・拡縮です。位置と拡縮は直接書き換えます。**回転は
+クォータニオンが正本**で、オイラー角は関数を通して読み書きします
+（Unityと同じ構造です）。
 
 **メンバー**
 
 | メンバー | 説明 |
 |---|---|
 | `position` | 位置。Xが右、Yが上、Zが奥（左手系）です |
-| `rotation` | 各軸まわりの回転角。**単位はラジアン**（度ではありません） |
+| `rotationQuaternion` | 回転の正本。単位クォータニオン。**通常は直接触りません** |
 | `scale` | 各軸の拡大率。`{1,1,1}`が元の大きさ、`{2,1,1}`で横だけ2倍 |
+| `EulerAngles()` | 現在の回転をオイラー角（**ラジアン**）で取得 |
+| `SetEulerAngles(...)` | オイラー角で回転を設定 |
+| `Rotate(axis, radians)` | 指定軸まわりに回転を**足す** |
+| `RotateEuler({x,y,z})` | オイラー角ぶんの回転を**足す** |
 
 **解説**
 
-`rotation`は**ラジアン**です。度で指定したいときは
+角度は**ラジアン**です。度で指定したいときは
 `DirectX::XMConvertToRadians(90.0f)`で変換します。
+
+**なぜクォータニオンなのか**: オイラー角だとピッチ±90度でヨーと
+ロールが縮退して独立に回せなくなります（ジンバルロック）。また
+補間が最短経路を通らず、途中で軸が振れます。クォータニオンには
+どちらの問題もありません。
+
+**「回転を足す」ときは `Rotate` か `RotateEuler` を使ってください。**
+`EulerAngles()` は読み取り専用なので、`EulerAngles().y += ...` のような
+書き方はできません（コンパイルエラーになります）。オイラー角を
+取得して足して設定し直すやり方も、順序依存の誤差が溜まるため
+勧めません。
+
+```cpp
+// NG（コンパイルできない）
+transform.EulerAngles().y += delta;
+
+// OK（回転として合成される）
+transform.Rotate({ 0.0f, 1.0f, 0.0f }, delta);
+```
 
 親がいる場合、この値は**親から見た相対位置**になります。ワールド座標で
 動かしたいときは`Owner().TranslateWorld()`を使います。
@@ -557,8 +597,9 @@ void Update(const float deltaTime) override
     transform.position.y += 2.0f * deltaTime;
 
     // Y軸まわりに毎秒90度回転
-    transform.rotation.y +=
-        DirectX::XMConvertToRadians(90.0f) * deltaTime;
+    transform.Rotate(
+        { 0.0f, 1.0f, 0.0f },
+        DirectX::XMConvertToRadians(90.0f) * deltaTime);
 
     // 大きさを1.5倍に
     transform.scale = { 1.5f, 1.5f, 1.5f };
@@ -633,6 +674,78 @@ void Start() override
     // 子を全部まとめて取る場合はOwner()から
     auto lights = Owner().GetComponentsInChildren<
         Trident::PointLightComponent>();
+}
+```
+
+---
+
+### GetScript / GetScriptInChildren
+
+**宣言**
+
+```cpp
+template<typename T> T* GetScript() const noexcept;
+template<typename T> T* GetScriptInChildren(bool includeInactive = false) const noexcept;
+```
+
+**概略**
+
+自分で書いたスクリプトを、その型や**自作インターフェース**で取得します。
+`GetComponent`はコンポーネント型しか受け取れないため、
+スクリプト同士を疎結合につなぐときはこちらを使います。
+
+**引数**
+
+| 引数 | 説明 |
+|---|---|
+| `T`（テンプレート引数） | 探すスクリプトの型、またはそれが実装するインターフェース |
+| `includeInactive` | `GetScriptInChildren`のみ。trueで非アクティブな子も探します（既定はfalse） |
+
+**戻り値**
+
+見つかれば`T*`、無ければ`nullptr`。**nullチェックが必要**です。
+
+**解説**
+
+インターフェースはエンジンへ登録しない普通のC++の型で構いません。
+実装側は`Trident::Script`と一緒に継承し、順番はどちらが先でも動きます。
+`GetScriptInChildren`は`GetComponentInChildren`と同じく自分自身も対象にします。
+同じ関数は`GameObject`にもあるので、他のオブジェクトに対しても呼べます。
+
+インターフェースを追加・変更したらGame Moduleのビルドが必要です
+（`assets`以下の`.cpp`／`.h`を保存すると自動でビルドされます）。
+
+**サンプル**
+
+```cpp
+// assets/scripts/IDamageable.h
+struct IDamageable
+{
+    virtual ~IDamageable() = default;
+    virtual void ApplyDamage(int amount) = 0;
+};
+
+// 実装側（Trident::Scriptは先頭でなくてよい）
+class Enemy final
+    : public IDamageable
+    , public Trident::Script
+{
+public:
+    void ApplyDamage(int amount) override { m_health -= amount; }
+
+private:
+    int m_health{ 100 };
+};
+
+TRIDENT_SCRIPT(Enemy);
+
+// 呼ぶ側はEnemyを知らなくてよい
+void Bullet::OnCollisionEnter(const Trident::CollisionEvent& event)
+{
+    if (auto* target = event.other.GetScript<IDamageable>())
+    {
+        target->ApplyDamage(25);
+    }
 }
 ```
 
@@ -1140,6 +1253,122 @@ void Update(float) override
     {
         const float progress = scenes.LoadProgress();  // 0〜1
     }
+}
+```
+
+---
+
+### レンダーテクスチャ（ミニマップ・防犯カメラ）
+
+**宣言**
+
+```cpp
+// CameraComponent
+void SetTargetTexture(std::string name);        // 空で通常の画面描画
+void SetTargetTextureSize(std::uint32_t width, std::uint32_t height);
+void SetTargetClearColor(const DirectX::XMFLOAT4& color);
+
+// SpriteRendererComponent / UIImageComponent
+void SetRenderTexture(std::string name);
+```
+
+**概略**
+
+Cameraの映像をテクスチャへ描き、SpriteやUIへ貼ります。
+
+**引数**
+
+| 引数 | 説明 |
+|---|---|
+| `name` | 描画先の名前。Camera側と表示側で同じ文字列にすると繋がります |
+| `width` / `height` | テクスチャの解像度（既定512x512）。小さいほど軽いです |
+| `color` | 毎フレームの塗りつぶし色。アルファを下げると半透明になります |
+
+**解説**
+
+2D／UIはテクスチャへ描かれません（表示中のSprite自身が写り込むのを防ぐため）。
+Bloom・トーンマッピング・FXAAは品質設定に従って適用されます。
+Scene切り替えでテクスチャは破棄され、必要な分だけ作り直されます。
+
+**サンプル**
+
+```cpp
+auto& minimap = GetScene().CreateGameObject("Minimap Camera");
+minimap.GetTransform().position = { 0.0f, 40.0f, 0.0f };
+minimap.GetTransform().SetEulerAngles(
+    { 1.5f, 0.0f, 0.0f });
+auto& camera = minimap.AddComponent<Trident::CameraComponent>();
+camera.SetTargetTexture("minimap");
+camera.SetTargetTextureSize(256, 256);
+
+auto& hud = GetScene().CreateGameObject("Minimap HUD");
+auto& sprite = hud.AddComponent<Trident::SpriteRendererComponent>(
+    DirectX::XMFLOAT2{ 200.0f, 200.0f });
+sprite.SetRenderTexture("minimap");
+```
+
+---
+
+### シーンの追加読み込み（Additive）
+
+**宣言**
+
+```cpp
+// SceneManager（GetScene().Scenes()）
+[[nodiscard]] bool RequestLoadAdditive(std::filesystem::path scenePath);
+[[nodiscard]] bool RequestLoadAdditiveAsync(std::filesystem::path scenePath);
+[[nodiscard]] bool RequestUnload(std::filesystem::path scenePath);
+
+// Scene（GetScene()）。こちらは即時に反映されます
+SceneHandle MergeFromFile(const std::filesystem::path& path);
+bool UnloadScene(SceneHandle handle);
+bool UnloadScene(const std::filesystem::path& path);
+void UnloadAllAdditiveScenes();
+const std::vector<LoadedSceneInfo>& AdditiveScenes() const noexcept;
+```
+
+**概略**
+
+今のシーンを消さずに、別のシーンを重ねて読み込みます。常駐UI、ポーズ画面、
+ステージの分割読み込みに使います。
+
+**引数**
+
+| 引数 | 説明 |
+|---|---|
+| `scenePath` / `path` | `"scenes/hud.scene.json"`のようなassetsからの相対パス |
+| `handle` | `MergeFromFile`が返した番号。その追加シーンだけを破棄するときに渡します |
+
+**戻り値**
+
+`Request系`は要求を受け付ければtrue（falseの理由は`LastError()`）。
+`MergeFromFile`は追加シーンの`SceneHandle`。`UnloadScene`は破棄できればtrue。
+
+**解説**
+
+追加したGameObjectのIDは、既存のシーンと衝突しないよう振り直されます。
+環境設定（空・霧・Bloom）とMain Cameraは主シーンのものが残り、シーンを
+保存しても追加分は書き出されません。`RequestLoad`で切り替えると追加分も
+まとめて破棄されます。どのシーン由来かは`GameObject::SourceScene()`で
+確認できます（0が主シーン）。
+
+**サンプル**
+
+```cpp
+void ShowPauseMenu()
+{
+    auto& scenes = GetScene().Scenes();
+    if (!scenes.RequestLoadAdditive("scenes/pause.scene.json"))
+    {
+        Trident::Logger::Instance().Error(
+            "ポーズ画面を開けません: " + scenes.LastError());
+    }
+}
+
+void HidePauseMenu()
+{
+    static_cast<void>(
+        GetScene().Scenes().RequestUnload("scenes/pause.scene.json"));
 }
 ```
 
@@ -2427,6 +2656,8 @@ bool DeleteSlot(std::string_view slot);
 | ボタンの反応 | `UIButtonComponent::ConsumeClick()` |
 | 別スクリプトへ通知 | `Emit("EnemyDied")` と `On("EnemyDied", ...)` |
 | シーンを変える | `GetScene().Scenes().RequestLoadAsync("scenes/next.scene.json")` |
+| ポーズ画面を重ねる | `GetScene().Scenes().RequestLoadAdditive("scenes/pause.scene.json")` |
+| 重ねた画面を閉じる | `GetScene().Scenes().RequestUnload("scenes/pause.scene.json")` |
 | シーンをまたいでスコアを残す | `GetScene().Scenes().State().SetInteger("score", 100)` |
 | ポーズする | `Trident::Time::SetTimeScale(0.0f)` |
 | 地面に接地しているか | 下方向へ`GetScene().Raycast(...)` |
