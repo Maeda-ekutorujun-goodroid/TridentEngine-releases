@@ -1,5 +1,16 @@
 {
   "format": "TridentPackageIndex",
   "version": 1,
-  "packages": []
+  "packages": [
+    {
+      "name": "easing-tween",
+      "displayName": "Easing & Tween",
+      "description": "動きに緩急をつけるイージング関数（27種＋Linear）と、位置・回転・拡縮を時間をかけて動かすTweenコンポーネント。Easing.hをincludeすれば自分のScriptからも使えます。",
+      "author": "TridentEngine",
+      "version": "1.0.0",
+      "minimumEngineVersion": "2026.8.2",
+      "downloadUrl": "https://raw.githubusercontent.com/Timiratz/TridentEngine-releases/main/packages/easing-tween-1.0.0.zip",
+      "sizeBytes": 8870
+    }
+  ]
 }
